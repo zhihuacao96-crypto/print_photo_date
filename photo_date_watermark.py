@@ -107,18 +107,39 @@ def draw_watermark(img, text, font, color):
     return Image.alpha_composite(rgba, overlay)
 
 
-def save_output(img, src_path, out_dir):
+def save_output(rgba, src_path, out_dir, src_info, src_format, src_qtables):
     src = Path(src_path)
     ext = src.suffix.lower()
-    if ext in (".jpg", ".jpeg"):
+    if ext in (".jpg", ".jpeg") and src_format == "JPEG":
         dst = Path(out_dir) / src.name
-        img.convert("RGB").save(dst, "JPEG", quality=95)
+        out = rgba.convert("RGB")
+        kwargs = {"format": "JPEG", "optimize": True}
+        if src_qtables:
+            kwargs["qtables"] = src_qtables
+        else:
+            kwargs["quality"] = 95
+        sub = src_info.get("subsampling")
+        kwargs["subsampling"] = sub if isinstance(sub, int) and sub >= 0 else 2
+        if src_info.get("exif"):
+            kwargs["exif"] = src_info["exif"]
+        if src_info.get("icc_profile"):
+            kwargs["icc_profile"] = src_info["icc_profile"]
+        out.save(dst, **kwargs)
     elif ext == ".png":
         dst = Path(out_dir) / src.name
-        img.save(dst, "PNG")
+        kwargs = {"format": "PNG", "optimize": True}
+        if src_info.get("icc_profile"):
+            kwargs["icc_profile"] = src_info["icc_profile"]
+        rgba.save(dst, **kwargs)
     else:
         dst = Path(out_dir) / (src.stem + ".jpg")
-        img.convert("RGB").save(dst, "JPEG", quality=95)
+        out = rgba.convert("RGB")
+        kwargs = {"format": "JPEG", "quality": 95, "subsampling": 2, "optimize": True}
+        if src_info.get("exif"):
+            kwargs["exif"] = src_info["exif"]
+        if src_info.get("icc_profile"):
+            kwargs["icc_profile"] = src_info["icc_profile"]
+        out.save(dst, **kwargs)
     return dst
 
 
@@ -127,9 +148,16 @@ def process_one(src, out_dir, date_fmt, font_name, font_size, color):
     text = dt.strftime(date_fmt)
     with Image.open(src) as img:
         img.load()
+        src_info = {
+            "exif": img.info.get("exif"),
+            "icc_profile": img.info.get("icc_profile"),
+            "subsampling": img.info.get("subsampling"),
+        }
+        src_format = img.format
+        src_qtables = getattr(img, "quantization", None)
         font = load_font(font_name, font_size)
         watermarked = draw_watermark(img, text, font, color)
-    save_output(watermarked, src, out_dir)
+    save_output(watermarked, src, out_dir, src_info, src_format, src_qtables)
 
 
 class Worker(QtCore.QThread):
@@ -215,7 +243,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_size = QtWidgets.QLabel("字体大小: 48")
         left.addWidget(self.lbl_size)
         self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.slider.setRange(12, 240)
+        self.slider.setRange(12, 500)
         self.slider.setValue(48)
         self.slider.valueChanged.connect(self._on_size_changed)
         left.addWidget(self.slider)
